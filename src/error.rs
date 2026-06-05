@@ -5,9 +5,11 @@ pub enum Error {
     FailedToEstablishTCPClient,
     FailedToEstablishUDPClient,
     DidNotReceiveUDPBroadcast,
+    FailedToEstablishTCPConnection,
 
     ChannelFailed,
-    BroadcastFailed
+    BroadcastFailed,
+    UnableToAcquirePermit
 }
 
 pub type Res<T> = Result<T, Error>;

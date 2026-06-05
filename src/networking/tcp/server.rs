@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use std::net::Ipv4Addr;
 use std::net::SocketAddr;
 use std::net::SocketAddrV4;
@@ -6,11 +7,13 @@ use tokio::io::AsyncReadExt;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
 use tokio::net::TcpStream;
-use tokio::sync::broadcast;
 use tokio::sync::broadcast::channel;
+use tokio::sync::Semaphore;
+use tokio::sync::OwnedSemaphorePermit;
 
 use bytes::Bytes;
 use bytes::BytesMut;
+use tokio::task::JoinHandle;
 
 use crate::error::Error;
 use crate::error::Res;
@@ -25,7 +28,7 @@ enum Relay {
     External(SocketAddr, Bytes)
 }
 
-pub async fn construct_server(port: u16) -> Res<MPSCTx<Bytes>> {
+pub async fn construct_server(port: u16, max_connections: usize) -> Res<MPSCTx<Bytes>> {
 
     // Create channel for relaying bytes around the server
     let (
@@ -46,6 +49,7 @@ pub async fn handle_connection(
     connection: TcpStream,
     broadcast_sender: tokio::sync::broadcast::Sender<Relay>,
     mut broadcast_receiver: tokio::sync::broadcast::Receiver<Relay>,
+    permit: OwnedSemaphorePermit
 ) -> Res<()> {
 
     // Find the address of the remote connection prior to splitting
@@ -101,11 +105,41 @@ pub async fn handle_connection(
 /// Every instance of this task will push messages onto a queue
 /// When a message is received, it will be sent to the servers own recv
 /// Then, it will be sent to every other client except for the originator
-pub async fn server_thread(listener: TcpListener, recv_bytes: MPSCRx<Bytes>) {
+pub async fn server_thread(listener: TcpListener, recv_bytes: MPSCRx<Bytes>, max_connections: usize) -> Res<()> {
+
+    // Create a broadcast system so that tasks can contact one another
+    let (broadcaster, broadcast_receiver) = channel(CHANNEL_SIZE);
+    let mut tasks: Vec<JoinHandle<Res<()>>> = vec![];
+
+    // Semaphore to limit number of tasks
+    let semaphore = Arc::new(Semaphore::new(max_connections));
     
-    tokio::select! {
-        new_client = listener.accept() => match new_client {
-            Ok(client) => tokio::spawn(client)
+    loop {
+        tokio::select! {
+            maybe_connection = listener.accept() => match maybe_connection {
+                Ok((connection, _)) => {
+
+                    // Limit the number of active tasks
+                    let permit = Arc::clone(&semaphore)
+                        .acquire_owned()
+                        .await
+                        .map_err(|_| Error::UnableToAcquirePermit)?;
+
+                    // Spawn a new task to handle the acquired connection
+                    tasks.push(
+                        tokio::spawn(
+                            handle_connection(
+                                connection,
+                                broadcaster.clone(),
+                                broadcaster.subscribe(),
+                                permit
+                            )
+                        )
+                    );
+                },
+
+                Err(_) => Err(Error::FailedToEstablishTCPConnection)?
+            }
         }
     }
 }
