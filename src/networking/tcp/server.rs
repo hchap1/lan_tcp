@@ -7,6 +7,7 @@ use tokio::io::AsyncReadExt;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
 use tokio::net::TcpStream;
+use tokio::net::tcp::OwnedWriteHalf;
 use tokio::sync::broadcast::channel;
 use tokio::sync::Semaphore;
 use tokio::sync::OwnedSemaphorePermit;
@@ -19,7 +20,7 @@ use crate::error::Error;
 use crate::error::Res;
 use crate::networking::CHANNEL_SIZE;
 
-pub type MPSCTx<T> = tokio::sync::mpsc::Receiver<T>;
+pub type MPSCTx<T> = tokio::sync::mpsc::Sender<T>;
 pub type MPSCRx<T> = tokio::sync::mpsc::Receiver<T>;
 
 #[derive(Clone)]
@@ -28,7 +29,13 @@ enum Relay {
     External(SocketAddr, Bytes)
 }
 
-pub async fn construct_server(port: u16, max_connections: usize) -> Res<MPSCTx<Bytes>> {
+/// Starts a server process managing TCP clients efficiently
+/// Exposes MPSC channels for bytes in, bytes out
+pub async fn construct_server(port: u16, max_connections: usize) -> Res<(
+    MPSCTx<Bytes>,
+    MPSCRx<Bytes>,
+    JoinHandle<Res<()>>
+)> {
 
     // Create channel for relaying bytes around the server
     let (
@@ -36,12 +43,41 @@ pub async fn construct_server(port: u16, max_connections: usize) -> Res<MPSCTx<B
         recv_bytes
     ) = tokio::sync::mpsc::channel::<Bytes>(CHANNEL_SIZE);
 
+    let (
+        send_output,
+        recv_output
+    ) = tokio::sync::mpsc::channel::<Bytes>(CHANNEL_SIZE);
+
     // Bind a TCP Listener on all available interfaces
     let listener = TcpListener::bind(
         SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), port)
     ).await.map_err(|_| Error::FailedToEstablishTCPServer)?;
 
-    Ok(recv_bytes)
+    // Start a task managing
+    // - Client connections
+    // - Client tasks
+
+    let join_handle = tokio::spawn(
+        server_thread(
+            listener,
+            recv_bytes,
+            send_output,
+            max_connections
+        )
+    );
+
+    Ok((send_bytes, recv_output, join_handle))
+}
+
+/// Push the referenced bytes onto a WriteHalf with a big endian size prefix
+pub async fn send_bytes(write_half: &mut OwnedWriteHalf, bytes: &Bytes) -> Res<()> {
+    // BE (big endian) representation of byte array size
+    let be_len_repr = (bytes.len() as u32).to_be_bytes();
+
+    // Write the length of the bytes followed by the bytes
+    write_half.write_all(&be_len_repr).await.map_err(|_| Error::ChannelFailed)?;
+    write_half.write_all(&bytes).await.map_err(|_| Error::ChannelFailed)?;
+    Ok(())
 }
 
 /// Handle an individual TCP connection
@@ -49,7 +85,7 @@ pub async fn handle_connection(
     connection: TcpStream,
     broadcast_sender: tokio::sync::broadcast::Sender<Relay>,
     mut broadcast_receiver: tokio::sync::broadcast::Receiver<Relay>,
-    permit: OwnedSemaphorePermit
+    _permit: OwnedSemaphorePermit
 ) -> Res<()> {
 
     // Find the address of the remote connection prior to splitting
@@ -86,14 +122,9 @@ pub async fn handle_connection(
                         else { Some(bytes) }
                 };
 
+                // If the bytes weren't from self, send them on the channel
                 if let Some(bytes) = maybe_bytes {
-
-                    // BE (big endian) representation of byte array size
-                    let be_len_repr = (bytes.len() as u32).to_be_bytes();
-
-                    // Write the length of the bytes followed by the bytes
-                    write_half.write_all(&be_len_repr).await.map_err(|_| Error::ChannelFailed)?;
-                    write_half.write_all(&bytes).await.map_err(|_| Error::ChannelFailed)?;
+                    send_bytes(&mut write_half, &bytes).await?;
                 }
             }
         }
@@ -105,21 +136,30 @@ pub async fn handle_connection(
 /// Every instance of this task will push messages onto a queue
 /// When a message is received, it will be sent to the servers own recv
 /// Then, it will be sent to every other client except for the originator
-pub async fn server_thread(listener: TcpListener, recv_bytes: MPSCRx<Bytes>, max_connections: usize) -> Res<()> {
+pub async fn server_thread(
+    listener: TcpListener,
+    mut recv_bytes: MPSCRx<Bytes>,
+    output_bytes: MPSCTx<Bytes>,
+    max_connections: usize
+) -> Res<()> {
 
     // Create a broadcast system so that tasks can contact one another
-    let (broadcaster, broadcast_receiver) = channel(CHANNEL_SIZE);
+    let (broadcaster, mut broadcast_receiver) = channel(CHANNEL_SIZE);
     let mut tasks: Vec<JoinHandle<Res<()>>> = vec![];
 
     // Semaphore to limit number of tasks
     let semaphore = Arc::new(Semaphore::new(max_connections));
     
     loop {
-        tokio::select! {
+        let output_to_node = tokio::select! {
+
+            // Listen for new connections
             maybe_connection = listener.accept() => match maybe_connection {
                 Ok((connection, _)) => {
 
                     // Limit the number of active tasks
+                    // This does pause the ability of the server to participate
+                    // Will need to be fixed later. TODO
                     let permit = Arc::clone(&semaphore)
                         .acquire_owned()
                         .await
@@ -136,10 +176,38 @@ pub async fn server_thread(listener: TcpListener, recv_bytes: MPSCRx<Bytes>, max
                             )
                         )
                     );
+
+                    None
                 },
 
                 Err(_) => Err(Error::FailedToEstablishTCPConnection)?
+            },
+
+            // Check if the Node wishes to send any messages
+            // If so, broadcast them to all active clients
+            maybe_bytes = recv_bytes.recv() => {
+                let bytes = maybe_bytes.ok_or(Error::ChannelFailed)?;
+                broadcaster.send(Relay::Internal(bytes)).map_err(|_| Error::ChannelFailed)?;
+                None
+            },
+
+            // Read the broadcast channel to output to the Node
+            maybe_relay = broadcast_receiver.recv() => {
+                let relay = maybe_relay.map_err(|_| Error::ChannelFailed)?;
+                match relay {
+                    
+                    // The servers own message
+                    Relay::Internal(_) => None,
+
+                    // An incoming message from some client
+                    Relay::External(_, bytes) => Some(bytes)
+                }
             }
+        };
+
+        // If something caused output to be produced, dispatch it
+        if let Some(bytes) = output_to_node {
+            output_bytes.send(bytes).await.map_err(|_| Error::ChannelFailed)?;
         }
     }
 }

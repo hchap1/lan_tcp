@@ -40,6 +40,7 @@ impl Node {
         // 1 Start TCP server & threads
         // 2 Start responding on UDP
         // 3 Package handles and return
+        todo!();
     }
 
     /// After discovering a Server, build the recv and send threads
@@ -47,7 +48,7 @@ impl Node {
     pub async fn spawn_client(
         identifier: &'static str, port: u16, addr: IpAddr
     ) -> Res<Self> {
-        
+        todo!();
     }
 
 }
