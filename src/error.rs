@@ -1,7 +1,9 @@
 #[derive(Clone, Debug)]
 pub enum Error {
-    FailedToEstablishServer,
-    FailedToEstablishClient,
+    FailedToEstablishTCPServer,
+    FailedToEstablishUDPServer,
+    FailedToEstablishTCPClient,
+    FailedToEstablishUDPClient,
     DidNotReceiveUDPBroadcast,
 }
 

@@ -3,9 +3,8 @@ use std::net::IpAddr;
 use tokio::task::JoinHandle;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::mpsc::Receiver;
-use tokio::sync::mpsc::channel;
 
-use udp_discovery::server::Server;
+use crate::error::Res;
 
 pub struct Node {
 
@@ -14,18 +13,12 @@ pub struct Node {
     identifier: &'static str,
 
     // Thread listening for incoming TCP packets
-    // For an acting Server, this will poll all channels
-    // For an acting Client, this will await a single channel
-    // For a Server this also polls new connections
     recv_handle: JoinHandle<Res<()>>,
 
     // Thread responsible for processing outgoing messages
-    // Messages are moved into the thread by an MPSC channel
-    // For an acting Server, this will distribute to all channels
-    // For an acting Client, this will send to the single channel
     send_handle: JoinHandle<Res<()>>,
 
-    /// Owns UDP server and TCP connections for acting Servers only
+    /// Owns TCP connections for acting Servers only
     clnt_handle: Option<JoinHandle<Res<()>>>,
 
     // MPSC sender for handing messages to the send thread
@@ -33,7 +26,6 @@ pub struct Node {
 
     // MPSC receiver for dequeuing incoming messages
     // Note that this is functionally identical for server/client
-    // The relay functionality occurs prior
     // None signals shutdown
     incoming_queue: Receiver<Option<Vec<u8>>>
 }

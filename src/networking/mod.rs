@@ -1,3 +1,6 @@
+// Channel size
+pub const CHANNEL_SIZE: usize = 1024;
+
 /// Publicly exposed interface
 pub mod node;
 
