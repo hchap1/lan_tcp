@@ -5,6 +5,9 @@ pub enum Error {
     FailedToEstablishTCPClient,
     FailedToEstablishUDPClient,
     DidNotReceiveUDPBroadcast,
+
+    ChannelFailed,
+    BroadcastFailed
 }
 
 pub type Res<T> = Result<T, Error>;

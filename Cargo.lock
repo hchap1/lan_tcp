@@ -131,6 +131,7 @@ dependencies = [
 name = "lan_tcp"
 version = "0.1.0"
 dependencies = [
+ "bytes",
  "rkyv",
  "tokio",
  "udp_discovery",
