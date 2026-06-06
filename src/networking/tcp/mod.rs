@@ -36,3 +36,9 @@ pub async fn send_bytes<T: Headable>(write_half: &mut OwnedWriteHalf, packet: &T
 
 // The corresponding packets from Server -> Client should contain:
 // sizebytes authoraddr (may be the server itself) data
+
+// What was I doing? I was about to add a list of who to send it to to the broadcast within server, (empty = all)
+// Each client would check if its address in in that list, or the list is empty (alongside checking it wasnt self originated)
+// If so, it would use the existing author attribute (to check self origination) to construct a RecvPacket for the relay
+// After this I need to implement the client end which is simpler
+// Both ends need to be able to deserialise the bytes efficiently which should be fine reading into n size buffers
