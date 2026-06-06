@@ -8,7 +8,8 @@ pub enum Error {
     FailedToEstablishTCPConnection,
     CannotProcessIPV6,
 
-    ChannelFailed,
+    TcpChannelFailed,
+    MpscChannelFailed,
     BroadcastFailed,
     UnableToAcquirePermit
 }

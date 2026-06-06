@@ -76,7 +76,7 @@ async fn handle_connection(
 ) -> Res<()> {
 
     // Find the address of the remote connection prior to splitting
-    let addr = connection.peer_addr().map_err(|_| Error::ChannelFailed)?;
+    let addr = connection.peer_addr().map_err(|_| Error::TcpChannelFailed)?;
     let (mut read_half, mut write_half) = connection.into_split();
 
     loop {
@@ -84,16 +84,18 @@ async fn handle_connection(
             res = read_half.read_u32() => {
 
                 // Parse the size of the incoming packet (32bit)
-                let size = res.map_err(|_| Error::ChannelFailed)?;
+                let size = res.map_err(|_| Error::TcpChannelFailed)?;
                 let mut buf = BytesMut::zeroed(size as usize);
 
                 // Continue reading until the entire buffer is filled
-                read_half.read_exact(&mut buf).await.map_err(|_| Error::ChannelFailed)?;
+                read_half.read_exact(&mut buf)
+                    .await.map_err(|_| Error::TcpChannelFailed)?;
 
                 // Freeze the buffer (zero-copy) then broadcast
                 // This bypasses the main thread entirely to avoid bottleneck
                 let broadcast = Relay::External(addr, buf.freeze());
-                broadcast_sender.send(broadcast).map_err(|_| Error::BroadcastFailed)?;
+                broadcast_sender.send(broadcast)
+                    .map_err(|_| Error::BroadcastFailed)?;
             },
 
             res = broadcast_receiver.recv() => {
@@ -173,14 +175,15 @@ pub async fn server_task(
             // Check if the Node wishes to send any messages
             // If so, broadcast them to all active clients
             maybe_bytes = recv_input.recv() => {
-                let bytes = maybe_bytes.ok_or(Error::ChannelFailed)?;
-                broadcaster.send(Relay::Internal(bytes)).map_err(|_| Error::ChannelFailed)?;
+                let bytes = maybe_bytes.ok_or(Error::MpscChannelFailed)?;
+                broadcaster.send(Relay::Internal(bytes))
+                    .map_err(|_| Error::BroadcastFailed)?;
                 None
             },
 
             // Read the broadcast channel to output to the Node
             maybe_relay = broadcast_receiver.recv() => {
-                let relay = maybe_relay.map_err(|_| Error::ChannelFailed)?;
+                let relay = maybe_relay.map_err(|_| Error::BroadcastFailed)?;
                 match relay {
                     
                     // The servers own message
@@ -194,7 +197,7 @@ pub async fn server_task(
 
         // If something caused output to be produced, dispatch it
         if let Some(bytes) = output_to_node {
-            send_output.send(bytes).await.map_err(|_| Error::ChannelFailed)?;
+            send_output.send(bytes).await.map_err(|_| Error::MpscChannelFailed)?;
         }
     }
 }

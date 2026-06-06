@@ -6,7 +6,6 @@ use bytes::BytesMut;
 use tokio::io::AsyncReadExt;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::mpsc::Receiver;
-use tokio::sync::mpsc::channel;
 use tokio::net::TcpStream;
 use tokio::task::JoinHandle;
 
@@ -67,31 +66,29 @@ async fn client_thread(
     // Split the connection into discrete read and write halves
     let (mut read_half, mut write_half) = connection.into_split();
 
-    // TODO differentiate mpsc/tcp channel failure errors
-
     loop {
         tokio::select! {
             res = read_half.read_u32() => {
 
                 // Parse the size of the incoming packet (32bit)
-                let size = res.map_err(|_| Error::ChannelFailed)?;
+                let size = res.map_err(|_| Error::TcpChannelFailed)?;
                 let mut buf = BytesMut::zeroed(size as usize);
 
                 // Continue reading until the entire buffer is filled
                 read_half.read_exact(&mut buf)
                     .await
-                    .map_err(|_| Error::ChannelFailed)?;
+                    .map_err(|_| Error::TcpChannelFailed)?;
 
                 // Freeze the buffer (zero-copy) then output
                 send_output.send(buf.freeze())
                     .await
-                    .map_err(|_| Error::ChannelFailed)?;
+                    .map_err(|_| Error::MpscChannelFailed)?;
             },
 
             res = recv_input.recv() => {
 
                 // Parse the packet that the mpsc channel wishes to relay
-                let bytes = res.ok_or(Error::ChannelFailed)?;
+                let bytes = res.ok_or(Error::MpscChannelFailed)?;
 
                 // Send it over TCP
                 send_bytes(&mut write_half, &bytes).await?;

@@ -15,8 +15,8 @@ pub async fn send_bytes(write_half: &mut OwnedWriteHalf, bytes: &Bytes) -> Res<(
     let be_len_repr = (bytes.len() as u32).to_be_bytes();
 
     // Write the length of the bytes followed by the bytes
-    write_half.write_all(&be_len_repr).await.map_err(|_| Error::ChannelFailed)?;
-    write_half.write_all(&bytes).await.map_err(|_| Error::ChannelFailed)?;
+    write_half.write_all(&be_len_repr).await.map_err(|_| Error::TcpChannelFailed)?;
+    write_half.write_all(&bytes).await.map_err(|_| Error::TcpChannelFailed)?;
     Ok(())
 }
 
