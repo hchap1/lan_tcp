@@ -2,14 +2,20 @@ use std::net::IpAddr;
 use std::net::SocketAddr;
 use std::net::SocketAddrV4;
 
+use bytes::BytesMut;
+use tokio::io::AsyncReadExt;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::mpsc::Receiver;
 use tokio::sync::mpsc::channel;
 use tokio::net::TcpStream;
 use tokio::task::JoinHandle;
 
+use bytes::Bytes;
+
 use crate::error::Error;
 use crate::error::Res;
+use crate::networking::CHANNEL_SIZE;
+use crate::networking::tcp::send_bytes;
 
 pub async fn connect_client(addr: IpAddr, port: u16) -> Res<(
     Sender<Bytes>,
@@ -39,9 +45,48 @@ pub async fn connect_client(addr: IpAddr, port: u16) -> Res<(
         .await
         .map_err(|_| Error::FailedToEstablishTCPClient)?;
 
-    Ok(())
+    // Spawn a task to manage the client
+    let join_handle = tokio::spawn(
+        client_thread(tcp_stream)
+    );
+
+    Ok((
+        send_input,
+        recv_output,
+        join_handle
+    ))
 }
 
-async fn client_thread(tcp_stream: TcpStream) -> Res<()> {
+/// Track a single TCPStream connected to a foreign server
+async fn client_thread(
+    connection: TcpStream,
+    mut recv_input: Receiver<Bytes>,
+    send_output: Sender<Bytes>
+) -> Res<()> {
     
+    // Split the connection into discrete read and write halves
+    let (mut read_half, mut write_half) = connection.into_split();
+
+    loop {
+        tokio::select! {
+            res = read_half.read_u32() => {
+
+                // Parse the size of the incoming packet (32bit)
+                let size = res.map_err(|_| Error::ChannelFailed)?;
+                let mut buf = BytesMut::zeroed(size as usize);
+
+                // Continue reading until the entire buffer is filled
+                read_half.read_exact(&mut buf)
+                    .await
+                    .map_err(|_| Error::ChannelFailed)?;
+
+                // Freeze the buffer (zero-copy) then output
+                send_output.send(buf.freeze())
+                    .await
+                    .map_err(|_| Error::ChannelFailed)?;
+            },
+
+        };
+    }
+
 }

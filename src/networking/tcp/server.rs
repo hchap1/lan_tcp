@@ -126,7 +126,7 @@ async fn handle_connection(
 pub async fn server_task(
     listener: TcpListener,
     mut recv_input: Receiver<Bytes>,
-    output_bytes: Sender<Bytes>,
+    send_output: Sender<Bytes>,
     max_connections: usize
 ) -> Res<()> {
 
@@ -194,7 +194,7 @@ pub async fn server_task(
 
         // If something caused output to be produced, dispatch it
         if let Some(bytes) = output_to_node {
-            output_bytes.send(bytes).await.map_err(|_| Error::ChannelFailed)?;
+            send_output.send(bytes).await.map_err(|_| Error::ChannelFailed)?;
         }
     }
 }
