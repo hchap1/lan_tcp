@@ -1,4 +1,5 @@
 use std::net::IpAddr;
+use std::net::Ipv4Addr;
 
 use bytes::Bytes;
 use tokio::task::JoinHandle;
@@ -9,6 +10,76 @@ use crate::error::Res;
 use crate::error::Error;
 use crate::networking::tcp::client;
 use crate::networking::tcp::server;
+use crate::networking::tcp::Headable;
+
+pub enum Destination {
+
+    // Corresponds to 0 indicating all clients
+    All,
+
+    // Corresponds to 1abcd where IP is a.b.c.d
+    Single(Ipv4Addr),
+
+    // Corresponds to Na1b1c1d1...aNbNcNdN
+    // Where N is the number of IPs
+    Multiple(Vec<Ipv4Addr>)
+}
+
+pub struct SendPacket {
+    data: Bytes,
+    destination: Destination
+}
+
+pub struct RecvPacket {
+    data: Bytes,
+    origination: Ipv4Addr
+}
+
+impl Headable for SendPacket {
+    /// 4 byte representation of size
+    /// 1 byte representing destination count n
+    /// 4n byte representation of destinations
+    fn header(&self) -> Bytes {
+        let size_header = (self.data.len() as u32).to_be_bytes();
+        let mut byte_vec = Vec::from(size_header);
+
+        // Construct the byte representation of the addressing
+        let (count, mut bytes) = match &self.destination {
+            Destination::All => (0u8, Vec::new()),
+            Destination::Single(addr) => (1u8, Vec::from(addr.octets())),
+            Destination::Multiple(addrs) => (addrs.len() as u8, addrs
+                .into_iter()
+                .map(|a| a.octets())
+                .flatten()
+                .collect()
+            )
+        };
+
+        byte_vec.push(count);
+        byte_vec.append(&mut bytes);
+
+        Bytes::from(bytes)
+    }
+
+    fn body(&self) -> &Bytes {
+        &self.data
+    }
+}
+
+impl Headable for RecvPacket {
+    /// 4 byte representation of size
+    /// 4 byte representation of author
+    fn header(&self) -> Bytes {
+        let mut vec = Vec::with_capacity(8);
+        vec.extend_from_slice(&(self.data.len() as u32).to_be_bytes());
+        vec.extend_from_slice(&self.origination.octets());
+        Bytes::from(vec)
+    }
+
+    fn body(&self) -> &Bytes {
+        &self.data
+    }
+}
 
 pub struct Node {
 
@@ -129,4 +200,8 @@ impl Node {
         })
     }
 
+    // Node helper methods
+    pub async fn send(packet: Bytes, desination: Destination) -> Res<()> {
+
+    }
 }

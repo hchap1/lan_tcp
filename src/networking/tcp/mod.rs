@@ -9,14 +9,17 @@ use crate::error::Res;
 pub mod server;
 pub mod client;
 
-/// Push the referenced bytes onto a WriteHalf with a big endian size prefix
-pub async fn send_bytes(write_half: &mut OwnedWriteHalf, bytes: &Bytes) -> Res<()> {
-    // BE (big endian) representation of byte array size
-    let be_len_repr = (bytes.len() as u32).to_be_bytes();
+pub trait Headable {
+    fn header(&self) -> Bytes;
+    fn body(&self) -> &Bytes;
+}
 
-    // Write the length of the bytes followed by the bytes
-    write_half.write_all(&be_len_repr).await.map_err(|_| Error::TcpChannelFailed)?;
-    write_half.write_all(&bytes).await.map_err(|_| Error::TcpChannelFailed)?;
+/// Push the referenced bytes onto a WriteHalf with a big endian size prefix
+pub async fn send_bytes<T: Headable>(write_half: &mut OwnedWriteHalf, packet: &T) -> Res<()> {
+
+    // Write the packet header followed by the body
+    write_half.write_all(&packet.header()).await.map_err(|_| Error::TcpChannelFailed)?;
+    write_half.write_all(packet.body()).await.map_err(|_| Error::TcpChannelFailed)?;
     Ok(())
 }
 
@@ -27,4 +30,9 @@ pub async fn send_bytes(write_half: &mut OwnedWriteHalf, bytes: &Bytes) -> Res<(
 // (at the server end)
 // Clients may give an addr to which the packet should be delivered
 // This will be in the form of four bytes after the size bytes
-// If the bytes are specified as 0,0,0,0 then the packet is broadcasted
+// If the bytes are specified as 0 then the packet is broadcasted
+// Otherwise, it's in the form N a1 b1 c1 d1 ... aN bN cN dN
+// Where N is the number of IP addresses included
+
+// The corresponding packets from Server -> Client should contain:
+// sizebytes authoraddr (may be the server itself) data
