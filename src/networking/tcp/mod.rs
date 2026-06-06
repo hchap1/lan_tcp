@@ -20,3 +20,11 @@ pub async fn send_bytes(write_half: &mut OwnedWriteHalf, bytes: &Bytes) -> Res<(
     Ok(())
 }
 
+// TODO End-Goal
+// When a Client connects to the Server a packet
+// containing the IP of every other client is sent
+// Each message is 'signed' with the IP of the client who sent it
+// (at the server end)
+// Clients may give an addr to which the packet should be delivered
+// This will be in the form of four bytes after the size bytes
+// If the bytes are specified as 0,0,0,0 then the packet is broadcasted
