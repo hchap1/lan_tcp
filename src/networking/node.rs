@@ -6,6 +6,7 @@ use tokio::sync::mpsc::Sender;
 use tokio::sync::mpsc::Receiver;
 
 use crate::error::Res;
+use crate::networking::tcp::client;
 use crate::networking::tcp::server;
 
 pub struct Node {
@@ -63,7 +64,26 @@ impl Node {
     pub async fn spawn_client(
         identifier: &'static str, port: u16, addr: IpAddr
     ) -> Res<Self> {
-        todo!();
+
+        // 1 Start TCP client task
+        let (
+            outgoing_queue,
+            incoming_queue,
+            tcp_handle
+        ) = client::connect_client(addr, port).await?;
+
+        // 2 Client does not use UDP after creation
+        let udp_handle = None;
+
+        // 3 Package handles and return
+        Ok(Node {
+            port,
+            identifier,
+            tcp_handle,
+            udp_handle,
+            outgoing_queue,
+            incoming_queue
+        })
     }
 
 }
