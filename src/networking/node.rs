@@ -6,6 +6,7 @@ use tokio::sync::mpsc::Sender;
 use tokio::sync::mpsc::Receiver;
 
 use crate::error::Res;
+use crate::networking::tcp::server;
 
 pub struct Node {
 
@@ -13,19 +14,16 @@ pub struct Node {
     port: u16,
     identifier: &'static str,
 
-    // Thread listening for incoming TCP packets for acting Clients
-    // For acting Servers, this instead handles both simultaneously
-    recv_handle: JoinHandle<Res<()>>,
+    // Thread processing TCP communication
+    tcp_handle: JoinHandle<Res<()>>,
 
-    // Thread responsible for processing outgoing messages for Clients
-    // For acting Servers, this instead handles UDB broadcast handling
-    send_handle: JoinHandle<Res<()>>,
+    // For servers only, keeps the UDP handler alive
+    udp_handle: Option<udp_discovery::server::Server>,
 
     // MPSC sender for handing bytes to be forwarded
     outgoing_queue: Sender<Bytes>,
 
-    // MPSC receiver for dequeuing incoming messages
-    // Note that this is functionally identical for server/client
+    // MPSC receiver for dequeuing incoming bytes
     incoming_queue: Receiver<Bytes>
 }
 
@@ -34,12 +32,30 @@ impl Node {
     /// Construct the threads and callback structure for a Server
     /// Then package them together with UDP advertisement into a Node
     pub async fn spawn_server(
-        identifier: &'static str, port: u16
-    ) -> Self {
-        // 1 Start TCP server & threads
+        identifier: &'static str, port: u16, max_connections: usize
+    ) -> Res<Self> {
+
+        // 1 Start TCP server task
+        let (
+            outgoing_queue,
+            incoming_queue,
+            tcp_handle
+        ) = server::construct_server(port, max_connections).await?;
+
         // 2 Start responding on UDP
+        let udp_handle = Some(
+            udp_discovery::server::Server::spawn(identifier, port).await
+        );
+
         // 3 Package handles and return
-        todo!();
+        Ok(Node {
+            port,
+            identifier,
+            tcp_handle,
+            udp_handle,
+            outgoing_queue,
+            incoming_queue
+        })
     }
 
     /// After discovering a Server, build the recv and send threads
