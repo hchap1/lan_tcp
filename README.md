@@ -6,9 +6,12 @@ Broadcasts a UDP message alerting any similar servers on the LAN.
 If a server receives the UDP broadcast it will respond to the client directly with its address information, with which the client forms a TCP connection.
 If the client does not receive a response from the server within a period of time, it starts its own server and begins listening for UDP broadcasts.
 
-The behaviour of the server is to relay each packet to every client, including itself.
+Once a network is established, the goal is to provide each client with the ability to message one, multiple or all other clients by sending a single packet to the server. The server itself exposes an interface causing it to act like a client also - that is, messages can be addressed to or sent from the server.
+The difference between client and server is entirely obfuscated within a "Node" architecture.
 
-Current behaviour (goal) upon server termination is for every client to terminate.
 Connections will be terminated by Server/Client(s) when an incorrect 'identifier' str is exchanged to provide some layer of resistance to random things connecting.
 
-Also, there is no intent to provide collision resistance - that is, two applications sharing the same UDP port will simply fail (unless they have the same identifier).
+Long term goals:
+- Collision resistance (IE multiple applications employing this crate on the same port).
+- Thorough testing and optimisation for throughput / large number of clients
+- Realtime restructuring when server exits via election of a new server
