@@ -4,10 +4,8 @@ use std::net::SocketAddr;
 use std::net::SocketAddrV4;
 
 use tokio::io::AsyncReadExt;
-use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
 use tokio::net::TcpStream;
-use tokio::net::tcp::OwnedWriteHalf;
 use tokio::sync::broadcast::channel;
 use tokio::sync::Semaphore;
 use tokio::sync::OwnedSemaphorePermit;
@@ -19,6 +17,7 @@ use tokio::task::JoinHandle;
 use crate::error::Error;
 use crate::error::Res;
 use crate::networking::CHANNEL_SIZE;
+use crate::networking::tcp::send_bytes;
 
 pub type MPSCTx<T> = tokio::sync::mpsc::Sender<T>;
 pub type MPSCRx<T> = tokio::sync::mpsc::Receiver<T>;
@@ -58,7 +57,7 @@ pub async fn construct_server(port: u16, max_connections: usize) -> Res<(
     // - Client tasks
 
     let join_handle = tokio::spawn(
-        server_thread(
+        server_task(
             listener,
             recv_bytes,
             send_output,
@@ -67,17 +66,6 @@ pub async fn construct_server(port: u16, max_connections: usize) -> Res<(
     );
 
     Ok((send_bytes, recv_output, join_handle))
-}
-
-/// Push the referenced bytes onto a WriteHalf with a big endian size prefix
-pub async fn send_bytes(write_half: &mut OwnedWriteHalf, bytes: &Bytes) -> Res<()> {
-    // BE (big endian) representation of byte array size
-    let be_len_repr = (bytes.len() as u32).to_be_bytes();
-
-    // Write the length of the bytes followed by the bytes
-    write_half.write_all(&be_len_repr).await.map_err(|_| Error::ChannelFailed)?;
-    write_half.write_all(&bytes).await.map_err(|_| Error::ChannelFailed)?;
-    Ok(())
 }
 
 /// Handle an individual TCP connection
@@ -136,7 +124,7 @@ async fn handle_connection(
 /// Every instance of this task will push messages onto a queue
 /// When a message is received, it will be sent to the servers own recv
 /// Then, it will be sent to every other client except for the originator
-pub async fn server_thread(
+pub async fn server_task(
     listener: TcpListener,
     mut recv_bytes: MPSCRx<Bytes>,
     output_bytes: MPSCTx<Bytes>,
