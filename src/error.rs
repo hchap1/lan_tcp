@@ -6,6 +6,7 @@ pub enum Error {
     FailedToEstablishUDPClient,
     DidNotReceiveUDPBroadcast,
     FailedToEstablishTCPConnection,
+    CannotProcessIPV6,
 
     ChannelFailed,
     BroadcastFailed,

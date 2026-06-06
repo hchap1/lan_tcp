@@ -35,7 +35,7 @@ pub async fn construct_server(port: u16, max_connections: usize) -> Res<(
     JoinHandle<Res<()>>
 )> {
 
-    // Create channel for relaying bytes around the server
+    // Create channel for relaying bytes between the node and server
     let (
         send_input,
         recv_input
