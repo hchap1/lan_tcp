@@ -6,6 +6,7 @@ use tokio::sync::mpsc::Sender;
 use tokio::sync::mpsc::Receiver;
 
 use crate::error::Res;
+use crate::error::Error;
 use crate::networking::tcp::client;
 use crate::networking::tcp::server;
 
@@ -29,6 +30,48 @@ pub struct Node {
 }
 
 impl Node {
+
+    /// Attempt to find an acting Server via UDP broadcast
+    /// If this fails, then instead attempt to become the server
+    pub async fn spawn(
+        identifier: &'static str, port: u16, max_connections: usize
+    ) -> Res<Self> {
+        
+        // First, attempt to discover a Server via UDP broadcast
+        match udp_discovery::client::discover(identifier, port).await {
+
+            // If a server exists, then attempt to connect
+            // If this fails, try again else report the critical failure
+            Ok(server_addr) => match Self::spawn_client(
+                identifier, port, server_addr
+            ).await {
+                
+                // Ignore the first error and try again
+                Err(_) => Self::spawn_client(identifier, port, server_addr).await,
+                ok => ok
+            },
+
+            Err(e) => match e {
+
+                // If nothing was received (a server doesn't exist)
+                // Thus, attempt to start one of our own
+                udp_discovery::error::Error::RecvFailed => Self::spawn_server(
+                    identifier, port, max_connections
+                ).await,
+
+                // A 'server' was contacted but failed the security challenge
+                udp_discovery::error::Error::InvalidIdentifier => {
+                    eprintln!("Probed Server, but failed security challenge.");
+                    Err(Error::FailedToEstablishTCPConnection)
+                },
+
+                // All other UDP related errors associate with being unable to
+                // listen, due to some failure of the UDP client
+                _ => Err(Error::FailedToEstablishUDPClient)
+            },
+        }
+
+    }
 
     /// Construct the threads and callback structure for a Server
     /// Then package them together with UDP advertisement into a Node
