@@ -81,7 +81,7 @@ pub async fn send_bytes(write_half: &mut OwnedWriteHalf, bytes: &Bytes) -> Res<(
 }
 
 /// Handle an individual TCP connection
-pub async fn handle_connection(
+async fn handle_connection(
     connection: TcpStream,
     broadcast_sender: tokio::sync::broadcast::Sender<Relay>,
     mut broadcast_receiver: tokio::sync::broadcast::Receiver<Relay>,

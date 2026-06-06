@@ -1,5 +1,6 @@
 use std::net::IpAddr;
 
+use bytes::Bytes;
 use tokio::task::JoinHandle;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::mpsc::Receiver;
@@ -12,22 +13,20 @@ pub struct Node {
     port: u16,
     identifier: &'static str,
 
-    // Thread listening for incoming TCP packets
+    // Thread listening for incoming TCP packets for acting Clients
+    // For acting Servers, this instead handles both simultaneously
     recv_handle: JoinHandle<Res<()>>,
 
-    // Thread responsible for processing outgoing messages
+    // Thread responsible for processing outgoing messages for Clients
+    // For acting Servers, this instead handles UDB broadcast handling
     send_handle: JoinHandle<Res<()>>,
 
-    /// Owns TCP connections for acting Servers only
-    clnt_handle: Option<JoinHandle<Res<()>>>,
-
-    // MPSC sender for handing messages to the send thread
-    outgoing_queue: Sender<Vec<u8>>,
+    // MPSC sender for handing bytes to be forwarded
+    outgoing_queue: Sender<Bytes>,
 
     // MPSC receiver for dequeuing incoming messages
     // Note that this is functionally identical for server/client
-    // None signals shutdown
-    incoming_queue: Receiver<Option<Vec<u8>>>
+    incoming_queue: Receiver<Bytes>
 }
 
 impl Node {
