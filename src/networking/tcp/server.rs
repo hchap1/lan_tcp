@@ -6,21 +6,20 @@ use std::net::SocketAddrV4;
 use tokio::io::AsyncReadExt;
 use tokio::net::TcpListener;
 use tokio::net::TcpStream;
+use tokio::sync::mpsc::Sender;
+use tokio::sync::mpsc::Receiver;
 use tokio::sync::broadcast::channel;
 use tokio::sync::Semaphore;
 use tokio::sync::OwnedSemaphorePermit;
+use tokio::task::JoinHandle;
 
 use bytes::Bytes;
 use bytes::BytesMut;
-use tokio::task::JoinHandle;
 
 use crate::error::Error;
 use crate::error::Res;
 use crate::networking::CHANNEL_SIZE;
 use crate::networking::tcp::send_bytes;
-
-pub type MPSCTx<T> = tokio::sync::mpsc::Sender<T>;
-pub type MPSCRx<T> = tokio::sync::mpsc::Receiver<T>;
 
 #[derive(Clone)]
 enum Relay {
@@ -31,15 +30,15 @@ enum Relay {
 /// Starts a server process managing TCP clients efficiently
 /// Exposes MPSC channels for bytes in, bytes out
 pub async fn construct_server(port: u16, max_connections: usize) -> Res<(
-    MPSCTx<Bytes>,
-    MPSCRx<Bytes>,
+    Sender<Bytes>,
+    Receiver<Bytes>,
     JoinHandle<Res<()>>
 )> {
 
     // Create channel for relaying bytes around the server
     let (
-        send_bytes,
-        recv_bytes
+        send_input,
+        recv_input
     ) = tokio::sync::mpsc::channel::<Bytes>(CHANNEL_SIZE);
 
     let (
@@ -59,13 +58,13 @@ pub async fn construct_server(port: u16, max_connections: usize) -> Res<(
     let join_handle = tokio::spawn(
         server_task(
             listener,
-            recv_bytes,
+            recv_input,
             send_output,
             max_connections
         )
     );
 
-    Ok((send_bytes, recv_output, join_handle))
+    Ok((send_input, recv_output, join_handle))
 }
 
 /// Handle an individual TCP connection
@@ -126,8 +125,8 @@ async fn handle_connection(
 /// Then, it will be sent to every other client except for the originator
 pub async fn server_task(
     listener: TcpListener,
-    mut recv_bytes: MPSCRx<Bytes>,
-    output_bytes: MPSCTx<Bytes>,
+    mut recv_input: Receiver<Bytes>,
+    output_bytes: Sender<Bytes>,
     max_connections: usize
 ) -> Res<()> {
 
@@ -173,7 +172,7 @@ pub async fn server_task(
 
             // Check if the Node wishes to send any messages
             // If so, broadcast them to all active clients
-            maybe_bytes = recv_bytes.recv() => {
+            maybe_bytes = recv_input.recv() => {
                 let bytes = maybe_bytes.ok_or(Error::ChannelFailed)?;
                 broadcaster.send(Relay::Internal(bytes)).map_err(|_| Error::ChannelFailed)?;
                 None
