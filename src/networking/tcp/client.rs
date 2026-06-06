@@ -67,6 +67,8 @@ async fn client_thread(
     // Split the connection into discrete read and write halves
     let (mut read_half, mut write_half) = connection.into_split();
 
+    // TODO differentiate mpsc/tcp channel failure errors
+
     loop {
         tokio::select! {
             res = read_half.read_u32() => {
@@ -85,6 +87,15 @@ async fn client_thread(
                     .await
                     .map_err(|_| Error::ChannelFailed)?;
             },
+
+            res = recv_input.recv() => {
+
+                // Parse the packet that the mpsc channel wishes to relay
+                let bytes = res.ok_or(Error::ChannelFailed)?;
+
+                // Send it over TCP
+                send_bytes(&mut write_half, &bytes).await?;
+            }
 
         };
     }
