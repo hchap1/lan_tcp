@@ -119,6 +119,8 @@ impl Node {
     pub async fn spawn(
         identifier: &'static str, port: u16, max_connections: usize
     ) -> Res<Self> {
+
+        println!("Spawning node!");
        
         // First, attempt to discover a Server via UDP broadcast
         match udp_discovery::client::discover(identifier, port).await {
@@ -164,6 +166,8 @@ impl Node {
         max_connections: usize
     ) -> Res<Self> {
 
+        println!("Failed to find server, thus, starting a new one");
+
         // 1 Start TCP server task
         let (
             outgoing_queue,
@@ -172,10 +176,14 @@ impl Node {
             semaphore
         ) = server::construct_server(port, max_connections).await?;
 
+        println!("TCP Server established correctly");
+
         // 2 Start responding on UDP
         let _udp_handle = Some(
             udp_discovery::server::Server::spawn(identifier, port).await
         );
+
+        println!("UDP Server established correctly");
 
         // 3 Package handles and return
         Ok(Node {
@@ -197,12 +205,16 @@ impl Node {
         addr: IpAddr
     ) -> Res<Self> {
 
+        println!("Spawning client to connect to {addr:?}");
+
         // 1 Start TCP client task
         let (
             outgoing_queue,
             incoming_queue,
             tcp_handle
         ) = client::connect_client(addr, port).await?;
+
+        println!("Client connected successfully!");
 
         // 2 Client does not use UDP after creation
         let _udp_handle = None;
