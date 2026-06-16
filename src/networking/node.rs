@@ -3,7 +3,6 @@ use std::net::Ipv4Addr;
 use std::sync::Arc;
 
 use bytes::Bytes;
-use tokio::net::tcp;
 use tokio::sync::Semaphore;
 use tokio::task::JoinHandle;
 use tokio::sync::mpsc::Sender;

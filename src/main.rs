@@ -3,11 +3,13 @@ pub mod networking;
 
 use bytes::Bytes;
 
-use crate::networking::node::{Destination, Node, SendPacket};
+use crate::networking::node::{Destination, Node};
 use crate::error::Res;
 
 #[tokio::main]
 async fn main() -> Res<()> {
+
+    println!("If I were server, I would use {:?}", udp_discovery::server::Server::find_suitable_ipv4().await);
 
     let mut node: Node = Node::spawn("something-unique", 12345, 100).await?;
     
