@@ -17,7 +17,10 @@ pub enum Destination {
     // Corresponds to 0 indicating all clients
     All,
 
-    // Corresponds to 1abcd where IP is a.b.c.d
+    // Corresponds to 1abcd where IP of the server is a.b.c.d
+    Server,
+
+    // Corresponds to 10000 which will be interpreted as the server
     Single(Ipv4Addr),
 
     // Corresponds to Na1b1c1d1...aNbNcNdN
@@ -46,6 +49,7 @@ impl Headable for SendPacket {
         // Construct the byte representation of the addressing
         let (count, mut bytes) = match &self.destination {
             Destination::All => (0u8, Vec::new()),
+            Destination::Server => (1u8, vec![0u8; 4]),
             Destination::Single(addr) => (1u8, Vec::from(addr.octets())),
             Destination::Multiple(addrs) => (addrs.len() as u8, addrs
                 .into_iter()
