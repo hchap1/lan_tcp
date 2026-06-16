@@ -138,7 +138,7 @@ impl Node {
 
                 // If nothing was received (a server doesn't exist)
                 // Thus, attempt to start one of our own
-                udp_discovery::error::Error::RecvFailed => Self::spawn_server(
+                udp_discovery::error::Error::CouldNotFindServer => Self::spawn_server(
                     identifier, port, max_connections
                 ).await,
 
