@@ -2,6 +2,10 @@
 name = "lan_tcp"
 version = "0.1.0"
 edition = "2024"
+description = "Simple crate aiming to provide reasonably robust TCP communication with UDP discovery"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/hchap1/lan_tcp"
+readme = "README.md"
 
 [dependencies]
 tokio = { version = "1.52.3", features = ["net"] }

@@ -93,8 +93,8 @@ impl Headable for RecvPacket {
 pub struct Node {
 
     // Port and code designated for this application
-    port: u16,
-    identifier: &'static str,
+    pub port: u16,
+    pub identifier: &'static str,
 
     // Thread processing TCP communication
     tcp_handle: Option<JoinHandle<Res<()>>>,
