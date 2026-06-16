@@ -90,6 +90,7 @@ impl Headable for RecvPacket {
     }
 }
 
+#[derive(Debug)]
 pub struct Node {
 
     // Port and code designated for this application

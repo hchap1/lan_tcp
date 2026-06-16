@@ -1,6 +1,6 @@
 [package]
 name = "lan_tcp"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 description = "Simple crate aiming to provide reasonably robust TCP communication with UDP discovery"
 license = "MIT OR Apache-2.0"
@@ -10,5 +10,5 @@ readme = "README.md"
 [dependencies]
 tokio = { version = "1.52.3", features = ["net"] }
 rkyv = "0.8.16"
-udp_discovery = "0.1.1"
+udp_discovery = "0.1.2"
 bytes = "1.11.1"

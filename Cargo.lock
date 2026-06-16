@@ -129,7 +129,7 @@ dependencies = [
 
 [[package]]
 name = "lan_tcp"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "bytes",
  "rkyv",
@@ -419,9 +419,9 @@ dependencies = [
 
 [[package]]
 name = "udp_discovery"
-version = "0.1.1"
+version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f38c576b9249ce6166e35b6c89b5ee4add01b20e08bbea46b55a517d27180dcb"
+checksum = "4e0b8b8a50335286ff86df6cf7f404f57f96f9306ef1b236f1a7f14d11bb2fd0"
 dependencies = [
  "if-addrs",
  "tokio",
