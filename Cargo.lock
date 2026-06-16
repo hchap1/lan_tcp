@@ -419,9 +419,9 @@ dependencies = [
 
 [[package]]
 name = "udp_discovery"
-version = "0.1.0"
+version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e42fba3a1c0d4c0eb0fb771c6d99700661beacc3a6c7c8f83f87ec51f736538d"
+checksum = "f38c576b9249ce6166e35b6c89b5ee4add01b20e08bbea46b55a517d27180dcb"
 dependencies = [
  "if-addrs",
  "tokio",
