@@ -1,3 +1,4 @@
+use std::net::IpAddr;
 use std::sync::Arc;
 use std::net::Ipv4Addr;
 use std::net::SocketAddr;
@@ -19,19 +20,25 @@ use bytes::BytesMut;
 use crate::error::Error;
 use crate::error::Res;
 use crate::networking::CHANNEL_SIZE;
+use crate::networking::node::RecvPacket;
+use crate::networking::node::SendPacket;
 use crate::networking::tcp::send_bytes;
+use crate::networking::node::Destination;
+use crate::networking::tcp::Headable;
 
+/// Contains DESTINATIONS (origin) PACKET
+/// If destinations is empty, it is intended for every node
 #[derive(Clone)]
 enum Relay {
-    Internal(Bytes),
-    External(SocketAddr, Bytes)
+    Internal(Vec<Ipv4Addr>, Bytes),
+    External(Vec<Ipv4Addr>, SocketAddr, Bytes)
 }
 
 /// Starts a server process managing TCP clients efficiently
 /// Exposes MPSC channels for bytes in, bytes out
 pub async fn construct_server(port: u16, max_connections: usize) -> Res<(
-    Sender<Bytes>,
-    Receiver<Bytes>,
+    Sender<SendPacket>,
+    Receiver<RecvPacket>,
     JoinHandle<Res<()>>
 )> {
 
@@ -39,12 +46,12 @@ pub async fn construct_server(port: u16, max_connections: usize) -> Res<(
     let (
         send_input,
         recv_input
-    ) = tokio::sync::mpsc::channel::<Bytes>(CHANNEL_SIZE);
+    ) = tokio::sync::mpsc::channel::<SendPacket>(CHANNEL_SIZE);
 
     let (
         send_output,
         recv_output
-    ) = tokio::sync::mpsc::channel::<Bytes>(CHANNEL_SIZE);
+    ) = tokio::sync::mpsc::channel::<RecvPacket>(CHANNEL_SIZE);
 
     // Bind a TCP Listener on all available interfaces
     let listener = TcpListener::bind(
@@ -77,6 +84,10 @@ async fn handle_connection(
 
     // Find the address of the remote connection prior to splitting
     let addr = connection.peer_addr().map_err(|_| Error::TcpChannelFailed)?;
+    let ipv4 = match addr.ip() {
+        IpAddr::V4(ipv4) => ipv4,
+        IpAddr::V6(_) => Err(Error::CannotProcessIPV6)?
+    };
     let (mut read_half, mut write_half) = connection.into_split();
 
     loop {
@@ -87,13 +98,33 @@ async fn handle_connection(
                 let size = res.map_err(|_| Error::TcpChannelFailed)?;
                 let mut buf = BytesMut::zeroed(size as usize);
 
+                // Parse the number of addresses (8bit)
+                let mut address_count = BytesMut::zeroed(1usize);
+                read_half.read_exact(&mut address_count)
+                    .await.map_err(|_| Error::TcpChannelFailed)?;
+
+                // Parse each address in the packet
+                let address_count = address_count[0] as usize;
+                let mut addresses = Vec::new();
+                for _ in 0..address_count {
+                    let mut this_address = BytesMut::zeroed(4usize);
+                    read_half.read_exact(&mut this_address)
+                        .await.map_err(|_| Error::TcpChannelFailed)?;
+                    addresses.push(Ipv4Addr::new(
+                        this_address[0],
+                        this_address[1],
+                        this_address[2],
+                        this_address[3]
+                    ));
+                }
+
                 // Continue reading until the entire buffer is filled
                 read_half.read_exact(&mut buf)
                     .await.map_err(|_| Error::TcpChannelFailed)?;
 
                 // Freeze the buffer (zero-copy) then broadcast
                 // This bypasses the main thread entirely to avoid bottleneck
-                let broadcast = Relay::External(addr, buf.freeze());
+                let broadcast = Relay::External(addresses, addr, buf.freeze());
                 broadcast_sender.send(broadcast)
                     .map_err(|_| Error::BroadcastFailed)?;
             },
@@ -104,16 +135,68 @@ async fn handle_connection(
                 let relay = res.map_err(|_| Error::BroadcastFailed)?;
 
                 // Ignore packets from self
-                let maybe_bytes = match relay {
-                    Relay::Internal(bytes) => Some(bytes),
-                    Relay::External(author, bytes) =>
-                        if author == addr { None }
-                        else { Some(bytes) }
+                let (maybe_bytes, maybe_author) = match relay {
+
+                    // If from server, cannot be from self
+                    Relay::Internal(destinations, bytes) => match destinations.len() {
+                        0usize => (Some(bytes), Some(Ipv4Addr::new(1, 1, 1, 1))),
+                        _ => if destinations[0] == Ipv4Addr::new(1, 1, 1, 1) {
+
+                            // The packet is intended only for the server
+                            (None, None)
+                        } else {
+
+                            if destinations.contains(&ipv4) {
+
+                                // The packet was intended for this client
+                                (Some(bytes), Some(Ipv4Addr::new(1, 1, 1, 1)))
+                            } else {
+                                (None, None)
+                            }
+                        }
+                    }
+
+                    Relay::External(destinations, author, bytes) => {
+
+                        let author_ipv4 = match author.ip() {
+                            IpAddr::V4(ipv4) => ipv4,
+                            IpAddr::V6(_) => Err(Error::CannotProcessIPV6)?
+                        };
+
+                        if author == addr {
+                            (None, None)
+                        } else {
+
+                            // If the packet was written by another
+                            match destinations.len() {
+                                0usize => (Some(bytes), Some(author_ipv4)),
+                                _ => if destinations[0] == Ipv4Addr::new(1, 1, 1, 1) {
+
+                                    // The packet is intended only for the server
+                                    (None, None)
+                                } else {
+
+                                    if destinations.contains(&ipv4) {
+
+                                        // The packet was intended for this client
+                                        (Some(bytes), Some(author_ipv4))
+                                    } else {
+                                        (None, None)
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                 };
 
                 // If the bytes weren't from self, send them on the channel
-                if let Some(bytes) = maybe_bytes {
-                    send_bytes(&mut write_half, &bytes).await?;
+                if let (Some(bytes), Some(author_ipv4)) = (maybe_bytes, maybe_author) {
+                    let recv_packet = RecvPacket {
+                        data: bytes,
+                        origination: author_ipv4
+                    };
+                    send_bytes(&mut write_half, &recv_packet).await?;
                 }
             }
         }
@@ -127,10 +210,13 @@ async fn handle_connection(
 /// Then, it will be sent to every other client except for the originator
 pub async fn server_task(
     listener: TcpListener,
-    mut recv_input: Receiver<Bytes>,
-    send_output: Sender<Bytes>,
+    mut recv_input: Receiver<SendPacket>,
+    send_output: Sender<RecvPacket>,
     max_connections: usize
 ) -> Res<()> {
+
+    let my_ip = udp_discovery::server::Server::find_suitable_ipv4()
+        .await.map_err(|_| Error::FailedToEstablishTCPServer)?;
 
     // Create a broadcast system so that tasks can contact one another
     let (broadcaster, mut broadcast_receiver) = channel(CHANNEL_SIZE);
@@ -174,9 +260,18 @@ pub async fn server_task(
 
             // Check if the Node wishes to send any messages
             // If so, broadcast them to all active clients
-            maybe_bytes = recv_input.recv() => {
-                let bytes = maybe_bytes.ok_or(Error::MpscChannelFailed)?;
-                broadcaster.send(Relay::Internal(bytes))
+            maybe_send_packet = recv_input.recv() => {
+                let send_packet = maybe_send_packet.ok_or(Error::MpscChannelFailed)?;
+
+                // Parse destination
+                let destinations = match send_packet.destination.clone() {
+                    Destination::All => vec![],
+                    Destination::Server => vec![Ipv4Addr::new(1, 1, 1, 1)],
+                    Destination::Single(addr) => vec![addr],
+                    Destination::Multiple(addrs) => addrs
+                };
+
+                broadcaster.send(Relay::Internal(destinations, send_packet.body().clone()))
                     .map_err(|_| Error::BroadcastFailed)?;
                 None
             },
@@ -186,11 +281,32 @@ pub async fn server_task(
                 let relay = maybe_relay.map_err(|_| Error::BroadcastFailed)?;
                 match relay {
                     
-                    // The servers own message
-                    Relay::Internal(_) => None,
+                    // The servers own message should always be ignored
+                    Relay::Internal(_, _) => None,
 
                     // An incoming message from some client
-                    Relay::External(_, bytes) => Some(bytes)
+                    Relay::External(destinations, author, bytes) => {
+                        let packet = Some(
+                            RecvPacket {
+                                data: bytes,
+                                origination: match author.ip() {
+                                    IpAddr::V4(addr) => addr,
+                                    _ => Err(Error::CannotProcessIPV6)?
+                                }
+                            }
+                        );
+
+                        match destinations.len() {
+                            0usize => packet,
+                            _ => if destinations.contains(&Ipv4Addr::new(1, 1, 1, 1)) {
+                                packet
+                            } else if destinations.contains(&my_ip) {
+                                packet
+                            } else {
+                                None
+                            }
+                        }
+                    }
                 }
             }
         };

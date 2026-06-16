@@ -12,6 +12,7 @@ use crate::networking::tcp::client;
 use crate::networking::tcp::server;
 use crate::networking::tcp::Headable;
 
+#[derive(Clone, Debug)]
 pub enum Destination {
 
     // Corresponds to 0 indicating all clients
@@ -28,14 +29,16 @@ pub enum Destination {
     Multiple(Vec<Ipv4Addr>)
 }
 
+#[derive(Clone, Debug)]
 pub struct SendPacket {
-    data: Bytes,
-    destination: Destination
+    pub data: Bytes,
+    pub destination: Destination
 }
 
+#[derive(Clone, Debug)]
 pub struct RecvPacket {
-    data: Bytes,
-    origination: Ipv4Addr
+    pub data: Bytes,
+    pub origination: Ipv4Addr
 }
 
 impl Headable for SendPacket {
@@ -98,10 +101,10 @@ pub struct Node {
     udp_handle: Option<udp_discovery::server::Server>,
 
     // MPSC sender for handing bytes to be forwarded
-    outgoing_queue: Sender<Bytes>,
+    outgoing_queue: Sender<SendPacket>,
 
     // MPSC receiver for dequeuing incoming bytes
-    incoming_queue: Receiver<Bytes>
+    incoming_queue: Receiver<RecvPacket>
 }
 
 impl Node {
@@ -111,18 +114,18 @@ impl Node {
     pub async fn spawn(
         identifier: &'static str, port: u16, max_connections: usize
     ) -> Res<Self> {
-        
+       
         // First, attempt to discover a Server via UDP broadcast
         match udp_discovery::client::discover(identifier, port).await {
 
             // If a server exists, then attempt to connect
             // If this fails, try again else report the critical failure
-            Ok(server_addr) => match Self::spawn_client(
+            Ok(server_addr) => match Self::spawn_client_from_information(
                 identifier, port, server_addr
             ).await {
                 
                 // Ignore the first error and try again
-                Err(_) => Self::spawn_client(identifier, port, server_addr).await,
+                Err(_) => Self::spawn_client_from_information(identifier, port, server_addr).await,
                 ok => ok
             },
 
@@ -151,7 +154,9 @@ impl Node {
     /// Construct the threads and callback structure for a Server
     /// Then package them together with UDP advertisement into a Node
     pub async fn spawn_server(
-        identifier: &'static str, port: u16, max_connections: usize
+        identifier: &'static str,
+        port: u16,
+        max_connections: usize
     ) -> Res<Self> {
 
         // 1 Start TCP server task
@@ -179,8 +184,10 @@ impl Node {
 
     /// After discovering a Server, build the recv and send threads
     /// Then package them together with MPSC into a Node
-    pub async fn spawn_client(
-        identifier: &'static str, port: u16, addr: IpAddr
+    pub async fn spawn_client_from_information(
+        identifier: &'static str,
+        port: u16,
+        addr: IpAddr
     ) -> Res<Self> {
 
         // 1 Start TCP client task
@@ -204,8 +211,36 @@ impl Node {
         })
     }
 
-    // Node helper methods
-    pub async fn send(packet: Bytes, desination: Destination) -> Res<()> {
+    /// Attempt to discover a server over UDP
+    // On failure, do not create a server
+    pub async fn spawn_client(
+        identifier: &'static str,
+        port: u16,
+    ) -> Res<Node> {
 
+        // First, attempt to discover a Server via UDP broadcast
+        match udp_discovery::client::discover(identifier, port).await {
+
+            // If a server exists, then attempt to connect
+            // If this fails, try again else report the critical failure
+            Ok(server_addr) => match Self::spawn_client_from_information(
+                identifier, port, server_addr
+            ).await {
+                
+                // Ignore the first error and try again
+                Err(_) => Self::spawn_client_from_information(identifier, port, server_addr).await,
+                ok => ok
+            },
+            
+            Err(_) => Err(Error::FailedToEstablishTCPClient)
+        }
+    }
+
+    // Node helper methods
+    pub async fn send(&self, packet: Bytes, destination: Destination) -> Res<()> {
+        self.outgoing_queue.send(SendPacket {
+            data: packet,
+            destination
+        }).await.map_err(|_| Error::MpscChannelFailed)
     }
 }

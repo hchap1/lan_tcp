@@ -1,4 +1,5 @@
 use std::net::IpAddr;
+use std::net::Ipv4Addr;
 use std::net::SocketAddr;
 use std::net::SocketAddrV4;
 
@@ -9,16 +10,16 @@ use tokio::sync::mpsc::Receiver;
 use tokio::net::TcpStream;
 use tokio::task::JoinHandle;
 
-use bytes::Bytes;
-
 use crate::error::Error;
 use crate::error::Res;
 use crate::networking::CHANNEL_SIZE;
+use crate::networking::node::RecvPacket;
+use crate::networking::node::SendPacket;
 use crate::networking::tcp::send_bytes;
 
 pub async fn connect_client(addr: IpAddr, port: u16) -> Res<(
-    Sender<Bytes>,
-    Receiver<Bytes>,
+    Sender<SendPacket>,
+    Receiver<RecvPacket>,
     JoinHandle<Res<()>>
 )> {
 
@@ -26,18 +27,18 @@ pub async fn connect_client(addr: IpAddr, port: u16) -> Res<(
     let (
         send_input,
         recv_input
-    ) = tokio::sync::mpsc::channel::<Bytes>(CHANNEL_SIZE);
+    ) = tokio::sync::mpsc::channel::<SendPacket>(CHANNEL_SIZE);
 
     let (
         send_output,
         recv_output
-    ) = tokio::sync::mpsc::channel::<Bytes>(CHANNEL_SIZE);
+    ) = tokio::sync::mpsc::channel::<RecvPacket>(CHANNEL_SIZE);
 
 
     // Attempt to retrieve IPV4 address of the server
     let addr = match addr {
         IpAddr::V4(ipv4) => SocketAddr::V4(SocketAddrV4::new(ipv4, port)),
-        IpAddr::V6(ipv6) => Err(Error::CannotProcessIPV6)?
+        IpAddr::V6(_) => Err(Error::CannotProcessIPV6)?
     };
 
     let tcp_stream = TcpStream::connect(addr)
@@ -46,7 +47,7 @@ pub async fn connect_client(addr: IpAddr, port: u16) -> Res<(
 
     // Spawn a task to manage the client
     let join_handle = tokio::spawn(
-        client_thread(tcp_stream)
+        client_thread(tcp_stream, recv_input, send_output)
     );
 
     Ok((
@@ -59,8 +60,8 @@ pub async fn connect_client(addr: IpAddr, port: u16) -> Res<(
 /// Track a single TCPStream connected to a foreign server
 async fn client_thread(
     connection: TcpStream,
-    mut recv_input: Receiver<Bytes>,
-    send_output: Sender<Bytes>
+    mut recv_input: Receiver<SendPacket>,
+    send_output: Sender<RecvPacket>
 ) -> Res<()> {
     
     // Split the connection into discrete read and write halves
@@ -74,13 +75,28 @@ async fn client_thread(
                 let size = res.map_err(|_| Error::TcpChannelFailed)?;
                 let mut buf = BytesMut::zeroed(size as usize);
 
+                // Parse each address in the packet
+                let mut this_address = BytesMut::zeroed(4usize);
+                read_half.read_exact(&mut this_address)
+                    .await.map_err(|_| Error::TcpChannelFailed)?;
+
+                let origination = Ipv4Addr::new(
+                    this_address[0],
+                    this_address[1],
+                    this_address[2],
+                    this_address[3]
+                );
+
                 // Continue reading until the entire buffer is filled
                 read_half.read_exact(&mut buf)
                     .await
                     .map_err(|_| Error::TcpChannelFailed)?;
 
                 // Freeze the buffer (zero-copy) then output
-                send_output.send(buf.freeze())
+                send_output.send(RecvPacket {
+                    data: buf.freeze(),
+                    origination
+                })
                     .await
                     .map_err(|_| Error::MpscChannelFailed)?;
             },
