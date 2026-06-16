@@ -17,6 +17,7 @@ async fn main() -> Res<()> {
         Some((server_semaphore, max_connections)) => {
             Node::await_n_clients(server_semaphore, 1, max_connections).await;
             node.send(Bytes::from_static(&[1, 2, 3, 4, 5]), Destination::All).await?;
+            tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
         }
 
         None => {
