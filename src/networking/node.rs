@@ -1,7 +1,10 @@
 use std::net::IpAddr;
 use std::net::Ipv4Addr;
+use std::sync::Arc;
 
 use bytes::Bytes;
+use tokio::net::tcp;
+use tokio::sync::Semaphore;
 use tokio::task::JoinHandle;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::mpsc::Receiver;
@@ -95,16 +98,19 @@ pub struct Node {
     identifier: &'static str,
 
     // Thread processing TCP communication
-    tcp_handle: JoinHandle<Res<()>>,
+    tcp_handle: Option<JoinHandle<Res<()>>>,
 
     // For servers only, keeps the UDP handler alive
-    udp_handle: Option<udp_discovery::server::Server>,
+    _udp_handle: Option<udp_discovery::server::Server>,
 
     // MPSC sender for handing bytes to be forwarded
     outgoing_queue: Sender<SendPacket>,
 
     // MPSC receiver for dequeuing incoming bytes
-    incoming_queue: Receiver<RecvPacket>
+    pub incoming_queue: Receiver<RecvPacket>,
+
+    // Semaphore, only for the server, to count clients
+    semaphore: Option<(Arc<Semaphore>, usize)>
 }
 
 impl Node {
@@ -163,11 +169,12 @@ impl Node {
         let (
             outgoing_queue,
             incoming_queue,
-            tcp_handle
+            tcp_handle,
+            semaphore
         ) = server::construct_server(port, max_connections).await?;
 
         // 2 Start responding on UDP
-        let udp_handle = Some(
+        let _udp_handle = Some(
             udp_discovery::server::Server::spawn(identifier, port).await
         );
 
@@ -175,10 +182,11 @@ impl Node {
         Ok(Node {
             port,
             identifier,
-            tcp_handle,
-            udp_handle,
+            tcp_handle: Some(tcp_handle),
+            _udp_handle,
             outgoing_queue,
-            incoming_queue
+            incoming_queue,
+            semaphore: Some((semaphore, max_connections))
         })
     }
 
@@ -198,16 +206,17 @@ impl Node {
         ) = client::connect_client(addr, port).await?;
 
         // 2 Client does not use UDP after creation
-        let udp_handle = None;
+        let _udp_handle = None;
 
         // 3 Package handles and return
         Ok(Node {
             port,
             identifier,
-            tcp_handle,
-            udp_handle,
+            tcp_handle: Some(tcp_handle),
+            _udp_handle,
             outgoing_queue,
-            incoming_queue
+            incoming_queue,
+            semaphore: None
         })
     }
 
@@ -237,10 +246,37 @@ impl Node {
     }
 
     // Node helper methods
+
+    /// Send a packet to the following destinations
     pub async fn send(&self, packet: Bytes, destination: Destination) -> Res<()> {
         self.outgoing_queue.send(SendPacket {
             data: packet,
             destination
         }).await.map_err(|_| Error::MpscChannelFailed)
+    }
+
+    /// Await the graceful termination of the node, by taking ownership of the handle
+    pub async fn wait_for_close(&mut self) -> Res<()> {
+        let handle = self.tcp_handle
+            .take()
+            .ok_or(Error::ThreadFailed)?;
+
+        handle
+            .await
+            .map_err(|_| Error::ThreadFailed)?
+    }
+
+    // It is expected that the implementor uses the channel to receive messages
+
+    /// Retrieve the semaphore, which exists only for servers
+    pub fn get_semaphore(&self) -> Option<(Arc<Semaphore>, usize)> {
+        self.semaphore.clone()
+    }
+
+    /// Wait for N connections by polling
+    pub async fn await_n_clients(semaphore: Arc<Semaphore>, n: usize, max_connections: usize) {
+        while max_connections - semaphore.available_permits() < n {
+            tokio::time::sleep(tokio::time::Duration::from_secs(1));
+        }
     }
 }

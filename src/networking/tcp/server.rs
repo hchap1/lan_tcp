@@ -39,7 +39,8 @@ enum Relay {
 pub async fn construct_server(port: u16, max_connections: usize) -> Res<(
     Sender<SendPacket>,
     Receiver<RecvPacket>,
-    JoinHandle<Res<()>>
+    JoinHandle<Res<()>>,
+    Arc<Semaphore>
 )> {
 
     // Create channel for relaying bytes between the node and server
@@ -62,16 +63,19 @@ pub async fn construct_server(port: u16, max_connections: usize) -> Res<(
     // - Client connections
     // - Client tasks
 
+    // Semaphore to limit number of tasks
+    let semaphore = Arc::new(Semaphore::new(max_connections));
+
     let join_handle = tokio::spawn(
         server_task(
             listener,
             recv_input,
             send_output,
-            max_connections
+            semaphore.clone()
         )
     );
 
-    Ok((send_input, recv_output, join_handle))
+    Ok((send_input, recv_output, join_handle, semaphore))
 }
 
 /// Handle an individual TCP connection
@@ -212,7 +216,7 @@ pub async fn server_task(
     listener: TcpListener,
     mut recv_input: Receiver<SendPacket>,
     send_output: Sender<RecvPacket>,
-    max_connections: usize
+    semaphore: Arc<Semaphore>
 ) -> Res<()> {
 
     let my_ip = udp_discovery::server::Server::find_suitable_ipv4()
@@ -222,9 +226,6 @@ pub async fn server_task(
     let (broadcaster, mut broadcast_receiver) = channel(CHANNEL_SIZE);
     let mut tasks: Vec<JoinHandle<Res<()>>> = vec![];
 
-    // Semaphore to limit number of tasks
-    let semaphore = Arc::new(Semaphore::new(max_connections));
-    
     loop {
         let output_to_node = tokio::select! {
 

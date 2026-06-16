@@ -11,7 +11,8 @@ pub enum Error {
     TcpChannelFailed,
     MpscChannelFailed,
     BroadcastFailed,
-    UnableToAcquirePermit
+    UnableToAcquirePermit,
+    ThreadFailed
 }
 
 pub type Res<T> = Result<T, Error>;
