@@ -297,4 +297,9 @@ impl Node {
     pub fn take_receiver(&mut self) -> Option<Receiver<RecvPacket>> {
         self.incoming_queue.take()
     }
+
+    /// Obtain a clone of the sender for use in async applications
+    pub fn clone_sender(&self) -> Sender<SendPacket> {
+        self.outgoing_queue.clone()
+    }
 }
