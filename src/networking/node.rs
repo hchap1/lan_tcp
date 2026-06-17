@@ -107,7 +107,7 @@ pub struct Node {
     outgoing_queue: Sender<SendPacket>,
 
     // MPSC receiver for dequeuing incoming bytes
-    pub incoming_queue: Receiver<RecvPacket>,
+    incoming_queue: Option<Receiver<RecvPacket>>,
 
     // Semaphore, only for the server, to count clients
     semaphore: Option<(Arc<Semaphore>, usize)>
@@ -193,7 +193,7 @@ impl Node {
             tcp_handle: Some(tcp_handle),
             _udp_handle,
             outgoing_queue,
-            incoming_queue,
+            incoming_queue: Some(incoming_queue),
             semaphore: Some((semaphore, max_connections))
         })
     }
@@ -227,7 +227,7 @@ impl Node {
             tcp_handle: Some(tcp_handle),
             _udp_handle,
             outgoing_queue,
-            incoming_queue,
+            incoming_queue: Some(incoming_queue),
             semaphore: None
         })
     }
@@ -290,5 +290,11 @@ impl Node {
         while max_connections - semaphore.available_permits() < n {
             tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
         }
+    }
+
+    /// Take the receiver for incoming messages
+    /// This will only fail if the receiver has already been taken
+    pub fn take_receiver(&mut self) -> Option<Receiver<RecvPacket>> {
+        self.incoming_queue.take()
     }
 }
