@@ -1,6 +1,6 @@
 [package]
 name = "lan_tcp"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 description = "Simple crate aiming to provide reasonably robust TCP communication with UDP discovery"
 license = "MIT OR Apache-2.0"
