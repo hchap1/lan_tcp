@@ -288,7 +288,7 @@ impl Node {
     /// Wait for N connections by polling
     pub async fn await_n_clients(semaphore: Arc<Semaphore>, n: usize, max_connections: usize) {
         while max_connections - semaphore.available_permits() < n {
-            tokio::time::sleep(tokio::time::Duration::from_secs(1));
+            tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
         }
     }
 }
