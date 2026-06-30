@@ -136,7 +136,11 @@ async fn handle_connection(
             res = broadcast_receiver.recv() => {
 
                 // Parse the packet that the broadcast channel wishes to relay
-                let relay = res.map_err(|_| Error::BroadcastFailed)?;
+                let relay = match res {
+                    Ok(r) => r,
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(_) => Err(Error::BroadcastFailed)?
+                };
 
                 // Ignore packets from self
                 let (maybe_bytes, maybe_author) = match relay {
@@ -279,7 +283,11 @@ pub async fn server_task(
 
             // Read the broadcast channel to output to the Node
             maybe_relay = broadcast_receiver.recv() => {
-                let relay = maybe_relay.map_err(|_| Error::BroadcastFailed)?;
+                let relay = match maybe_relay {
+                    Ok(r) => r,
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(_) => Err(Error::BroadcastFailed)?
+                };
                 match relay {
                     
                     // The servers own message should always be ignored

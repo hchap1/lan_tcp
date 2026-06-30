@@ -54,7 +54,7 @@ impl Headable for SendPacket {
         // Construct the byte representation of the addressing
         let (count, mut bytes) = match &self.destination {
             Destination::All => (0u8, Vec::new()),
-            Destination::Server => (1u8, vec![0u8; 4]),
+            Destination::Server => (1u8, vec![1u8, 1u8, 1u8, 1u8]),
             Destination::Single(addr) => (1u8, Vec::from(addr.octets())),
             Destination::Multiple(addrs) => (addrs.len() as u8, addrs
                 .into_iter()
@@ -67,7 +67,7 @@ impl Headable for SendPacket {
         byte_vec.push(count);
         byte_vec.append(&mut bytes);
 
-        Bytes::from(bytes)
+        Bytes::from(byte_vec)
     }
 
     fn body(&self) -> &Bytes {
